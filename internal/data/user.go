@@ -1,8 +1,10 @@
 package data
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"log"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -80,4 +82,61 @@ func (u *UserModel) Insert(user *User) error {
 
 	}
 	return nil
+}
+
+func (u *UserModel) GetByEmail(email string) (*User, error) {
+	query := `
+	SELECT id, name, email, password_hash, activated
+	FROM users
+	WHERE email=$1`
+
+	var user User
+
+	err := u.DB.QueryRow(query, email).Scan(&user.ID, &user.Name, &user.Email, &user.Password.hash, &user.Activated)
+
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (u *UserModel) GetByToken(tokenPlainText string) (*User, error) {
+	// Hash the incoming token
+	tokenHash := sha256.Sum256([]byte(tokenPlainText))
+
+	// Log the hashed token for debugging
+	log.Printf("Token Hash: %x", tokenHash)
+
+	query := `
+    SELECT users.id, users.name, users.email, users.password_hash, users.activated
+    FROM users
+    INNER JOIN tokens
+    ON users.id = tokens.user_id
+    WHERE tokens.hash = $1
+    AND tokens.expiry > $2
+    `
+
+	var user User
+	// Convert the token hash to a string representation
+	args := []interface{}{tokenHash[:], time.Now()}
+
+	// Execute the query
+	err := u.DB.QueryRow(query, args...).Scan(
+		&user.ID,
+		&user.Name,
+		&user.Email,
+		&user.Password.hash, // Make sure this matches your User struct
+		&user.Activated,
+	)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
+		}
+	}
+
+	return &user, nil
 }
